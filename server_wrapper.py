@@ -68,7 +68,7 @@ class JarvisEngine(ToolCallAgent):
         "Quando a tarefa estiver completa, chame terminate com o resumo do resultado."
     )
  
-    max_steps: int = 15
+    max_steps: int = 8
  
     available_tools: ToolCollection = Field(
         default_factory=lambda: ToolCollection(
