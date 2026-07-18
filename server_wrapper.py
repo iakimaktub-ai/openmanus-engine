@@ -1,6 +1,4 @@
 import os
- 
-# --- gera import os
 import io
 import wave
 import base64
