@@ -89,13 +89,10 @@ class JarvisEngine(ToolCallAgent):
 
 
 app = FastAPI(title="OpenManus Engine for Jarvis")
-
-# Origens liberadas: seu Jarvis hospedado no GitHub Pages + arquivo local (file://,
-# que o navegador manda como origem "null") para você poder testar direto do PC também.
-ALLOWED_ORIGINS = [
-    "https://iakimaktub-ai.github.io",
-    "null",
-]
+# Origens liberadas. TEMPORARIAMENTE em "*" (qualquer origem) para confirmar que o
+# CORS é mesmo a causa. Depois de testar com sucesso, trocar para a lista específica:
+# ["null", "https://iakimaktub-ai.github.io"]
+ALLOWED_ORIGINS = ["*"]
 
 app.add_middleware(
     CORSMiddleware,
