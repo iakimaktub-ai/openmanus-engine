@@ -211,7 +211,16 @@ async def speak(req: TTSRequest, x_auth_token: str = Header(default="")):
     if not HF_CREDENTIALS:
         raise HTTPException(status_code=500, detail="HF_CREDENTIALS não configurada no servidor")
 
-    os.environ["HF_CREDENTIALS"] = HF_CREDENTIALS
+    # O SDK da Higgsfield não lê "HF_CREDENTIALS" diretamente — ele espera HF_KEY
+    # (um valor só) ou HF_API_KEY + HF_API_SECRET (dois valores separados).
+    # Aqui guardamos a credencial como "KEY_ID:KEY_SECRET" numa única secret e
+    # separamos nas duas variáveis que o SDK realmente procura.
+    if ":" in HF_CREDENTIALS:
+        hf_key_id, hf_key_secret = HF_CREDENTIALS.split(":", 1)
+        os.environ["HF_API_KEY"] = hf_key_id.strip()
+        os.environ["HF_API_SECRET"] = hf_key_secret.strip()
+    else:
+        os.environ["HF_KEY"] = HF_CREDENTIALS.strip()
     try:
         import higgsfield_client
     except ImportError:
