@@ -230,14 +230,20 @@ async def speak(req: TTSRequest, x_auth_token: str = Header(default="")):
         )
 
     try:
-        result = await higgsfield_client.subscribe_async(
-            "seed_audio",
-            arguments={
-                "prompt": req.text,
-                "voice_type": "element",
-                "voice_id": HIGGSFIELD_VOICE_ID,
-            },
+        import asyncio
+        result = await asyncio.wait_for(
+            higgsfield_client.subscribe_async(
+                "seed_audio",
+                arguments={
+                    "prompt": req.text,
+                    "voice_type": "element",
+                    "voice_id": HIGGSFIELD_VOICE_ID,
+                },
+            ),
+            timeout=8.0,
         )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Higgsfield demorou demais para responder (timeout de 8s)")
     except Exception as e:
         logger.error(f"erro na Higgsfield: {e}")
         raise HTTPException(status_code=502, detail=f"Erro na Higgsfield: {e}")
