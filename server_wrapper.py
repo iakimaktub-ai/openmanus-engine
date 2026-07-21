@@ -233,7 +233,7 @@ async def speak(req: TTSRequest, x_auth_token: str = Header(default="")):
         import asyncio
         result = await asyncio.wait_for(
             higgsfield_client.subscribe_async(
-                "bytedance/seed-audio-1.0",
+                "bytedance/seed-audio/v1/text-to-speech",
                 arguments={
                     "text": req.text,
                     "voice_type": "element",
@@ -245,7 +245,7 @@ async def speak(req: TTSRequest, x_auth_token: str = Header(default="")):
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="Higgsfield demorou demais para responder (timeout de 8s)")
     except Exception as e:
-        logger.error(f"erro na Higgsfield: {e}")
+        logger.error(f"erro na Higgsfield: {e} | detalhe completo: {repr(e)}")
         raise HTTPException(status_code=502, detail=f"Erro na Higgsfield: {e}")
 
     audio_url = None
