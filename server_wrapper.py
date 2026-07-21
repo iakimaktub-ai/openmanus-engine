@@ -10,7 +10,7 @@ import httpx
 
 def _write_config():
     api_key = os.environ.get("GEMINI_API_KEY", "")
-    model = os.environ.get("OPENMANUS_MODEL", "gemini-3-flash-preview")
+    model = os.environ.get("OPENMANUS_MODEL", "gemini-2.5-flash")
     base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
     os.makedirs("config", exist_ok=True)
     toml_content = (
