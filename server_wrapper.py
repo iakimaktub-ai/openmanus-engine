@@ -240,7 +240,7 @@ async def speak(req: TTSRequest, x_auth_token: str = Header(default="")):
                     "voice_id": HIGGSFIELD_VOICE_ID,
                 },
             ),
-            timeout=8.0,
+            timeout=5.0,
         )
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="Higgsfield demorou demais para responder (timeout de 8s)")
