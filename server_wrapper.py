@@ -233,9 +233,10 @@ async def speak(req: TTSRequest, x_auth_token: str = Header(default="")):
         import asyncio
         result = await asyncio.wait_for(
             higgsfield_client.subscribe_async(
-                "bytedance/seed-audio/v1/text-to-speech",
+                "text2speech_v2",
                 arguments={
-                    "text": req.text,
+                    "prompt": req.text,
+                    "variant": "elevenlabs",
                     "voice_type": "element",
                     "voice_id": HIGGSFIELD_VOICE_ID,
                 },
