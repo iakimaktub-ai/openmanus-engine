@@ -233,9 +233,9 @@ async def speak(req: TTSRequest, x_auth_token: str = Header(default="")):
         import asyncio
         result = await asyncio.wait_for(
             higgsfield_client.subscribe_async(
-                "seed_audio",
+                "bytedance/seed-audio-1.0",
                 arguments={
-                    "prompt": req.text,
+                    "text": req.text,
                     "voice_type": "element",
                     "voice_id": HIGGSFIELD_VOICE_ID,
                 },
@@ -250,11 +250,17 @@ async def speak(req: TTSRequest, x_auth_token: str = Header(default="")):
 
     audio_url = None
     if isinstance(result, dict):
-        for key in ("audio", "audios", "output", "outputs"):
-            val = result.get(key)
-            if isinstance(val, list) and val:
-                audio_url = val[0].get("url") or val[0].get("audio_url")
-                break
+        audio_field = result.get("audio")
+        if isinstance(audio_field, dict):
+            audio_url = audio_field.get("url")
+        elif isinstance(audio_field, list) and audio_field:
+            audio_url = audio_field[0].get("url") or audio_field[0].get("audio_url")
+        if not audio_url:
+            for key in ("audios", "output", "outputs"):
+                val = result.get(key)
+                if isinstance(val, list) and val:
+                    audio_url = val[0].get("url") or val[0].get("audio_url")
+                    break
         if not audio_url:
             audio_url = result.get("url") or result.get("audio_url")
 
