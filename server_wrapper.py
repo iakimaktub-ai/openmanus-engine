@@ -31,7 +31,12 @@ def _write_config():
         "[mcp]\n"
         'server_reference = "app.mcp.server"\n\n'
         "[daytona]\n"
-        'daytona_api_key = "unused"\n'
+        'daytona_api_key = "unused"\n\n'
+        "[search]\n"
+        'engine = "Bing"\n'
+        "fallback_engines = [\"DuckDuckGo\"]\n"
+        'lang = "pt"\n'
+        'country = "br"\n'
     )
     with open("config/config.toml", "w") as f:
         f.write(toml_content)
