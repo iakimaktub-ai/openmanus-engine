@@ -43,6 +43,47 @@ def _write_config():
 
 _write_config()
 
+import re
+
+
+def _extract_final_answer(raw: str) -> str:
+    """O agent.run() do OpenManus devolve o histórico INTEIRO de passos concatenado
+    (assim a biblioteca funciona por padrão) — não só a resposta final. E o tool
+    `terminate` não carrega um resumo, só confirma "concluído com sucesso". Então
+    a resposta de verdade fica no último passo útil ANTES do terminate. Esta função
+    filtra o log bruto pra extrair só essa parte, com fallback pro texto cru caso
+    o formato não bata com o esperado (evita quebrar caso a lib mude o log)."""
+    if not raw:
+        return raw
+    try:
+        parts = re.split(r"Step \d+: ", raw)
+        parts = [p.strip() for p in parts if p.strip()]
+        # descarta o passo do terminate (genérico, sem conteúdo útil) e passos de erro
+        useful = [
+            p for p in parts
+            if "cmd `terminate`" not in p and not p.startswith("Error:")
+        ]
+        if not useful:
+            return raw.strip()
+        last = useful[-1]
+        # remove o prefixo padrão "Observed output of cmd `x` executed:"
+        last = re.sub(r"^Observed output of cmd `[^`]+` executed:\s*", "", last)
+        # se veio como dict Python (ex.: {'observation': '...', 'success': True}),
+        # extrai só o texto de 'observation'
+        m = re.search(r"'observation':\s*'(.*)',\s*'success'", last, re.DOTALL)
+        if m:
+            obs = m.group(1)
+            if "\\n" in obs:
+                try:
+                    obs = obs.encode().decode("unicode_escape")
+                except Exception:
+                    pass
+            return obs.strip()
+        return last.strip()
+    except Exception:
+        return raw.strip()
+
+
 # --- agora sim, o resto dos imports ---
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -77,8 +118,13 @@ class JarvisEngine(ToolCallAgent):
         "qualquer fonte consultada estejam em inglês ou outro idioma, TRADUZA tudo e escreva o raciocínio "
         "e principalmente o resumo final inteiramente em português do Brasil. Nunca cole trechos em inglês "
         "no resumo final, nem misture os dois idiomas na mesma frase. "
-        "Ao concluir, chame a ferramenta terminate com um resumo claro, 100% em português, do "
-        "resultado final — esse resumo é o que será mostrado (e falado em voz) à pessoa."
+        "REGRA DE FORMATO: o texto que você produzir na SUA ÚLTIMA AÇÃO informativa antes de chamar "
+        "terminate (ex.: o texto que um script Python imprime, ou a mensagem final que você escrever) "
+        "é o que será mostrado E FALADO em voz alta para a pessoa — então essa última informação deve "
+        "estar em formato de fala natural: frases corridas, sem markdown, sem `====`, sem emojis, sem "
+        "listas com marcadores. Só números e valores relevantes, ditos como numa conversa. "
+        "Ao concluir, chame a ferramenta terminate — ela apenas encerra a execução, então garanta que a "
+        "resposta final já foi dada de forma completa e falável na ação anterior."
     )
     next_step_prompt: str = (
         "Escolha a ferramenta mais adequada para avançar a tarefa. "
@@ -159,7 +205,8 @@ async def run_task(req: TaskRequest, x_auth_token: str = Header(default="")):
 
     agent = JarvisEngine()
     try:
-        result = await agent.run(req.task)
+        raw_result = await agent.run(req.task)
+        result = _extract_final_answer(raw_result)
         return {"result": result}
     except Exception as e:
         logger.error(f"erro executando tarefa: {e}")
