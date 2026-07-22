@@ -9,8 +9,10 @@ import httpx
 # config.toml no momento em que o pacote app.config é importado).
 
 def _write_config():
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    model = os.environ.get("OPENMANUS_MODEL", "claude-sonnet-4-5")
+    # .strip() remove espaços em branco e quebras de linha acidentais que às vezes
+    # vêm junto ao copiar/colar a chave de um lugar pra outro (evita quebrar o TOML).
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    model = os.environ.get("OPENMANUS_MODEL", "claude-sonnet-5").strip()
     base_url = "https://api.anthropic.com/v1/"
     os.makedirs("config", exist_ok=True)
     toml_content = (
@@ -104,7 +106,7 @@ app.add_middleware(
 # Token simples pra ninguém além do seu Jarvis conseguir usar sua chave/quota.
 # Configure o mesmo valor como Secret WRAPPER_AUTH_TOKEN aqui no Space, e
 # cole esse mesmo valor no campo de token do Jarvis.
-AUTH_TOKEN = os.environ.get("WRAPPER_AUTH_TOKEN", "")
+AUTH_TOKEN = os.environ.get("WRAPPER_AUTH_TOKEN", "").strip()
 
 
 class TaskRequest(BaseModel):
@@ -116,9 +118,9 @@ class TTSRequest(BaseModel):
 
 
 GEMINI_TTS_MODEL = os.environ.get("GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts")
-GEMINI_API_KEY_FOR_TTS = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_API_KEY_FOR_TTS = os.environ.get("GEMINI_API_KEY", "").strip()
 
-HF_CREDENTIALS = os.environ.get("HF_CREDENTIALS", "")
+HF_CREDENTIALS = os.environ.get("HF_CREDENTIALS", "").strip()
 HIGGSFIELD_VOICE_ID = "bd7393a2-5a47-4f91-b516-d888dc92670c"  # "Voz do Jarvis"
 
 
