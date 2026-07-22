@@ -9,9 +9,9 @@ import httpx
 # config.toml no momento em que o pacote app.config é importado).
 
 def _write_config():
-    api_key = os.environ.get("GEMINI_API_KEY", "")
-    model = os.environ.get("OPENMANUS_MODEL", "gemini-2.5-flash")
-    base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    model = os.environ.get("OPENMANUS_MODEL", "claude-sonnet-4-5")
+    base_url = "https://api.anthropic.com/v1/"
     os.makedirs("config", exist_ok=True)
     toml_content = (
         "[llm]\n"
