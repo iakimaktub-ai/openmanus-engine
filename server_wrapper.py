@@ -141,7 +141,7 @@ async def stats(x_auth_token: str = Header(default="")):
     if AUTH_TOKEN and x_auth_token != AUTH_TOKEN:
         raise HTTPException(status_code=401, detail="token inválido")
     return {
-        "cpu_percent": psutil.cpu_percent(interval=0.3),
+        "cpu_percent": psutil.cpu_percent(interval=0),
         "memory_percent": psutil.virtual_memory().percent,
     }
 
