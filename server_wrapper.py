@@ -3,6 +3,7 @@ import io
 import wave
 import base64
 import httpx
+import psutil
 
 # --- gera config/config.toml a partir de variáveis de ambiente (Secrets do Space) ---
 # precisa acontecer ANTES de importar qualquer coisa de app.* (o OpenManus lê o
@@ -124,7 +125,11 @@ class JarvisEngine(ToolCallAgent):
         "estar em formato de fala natural: frases corridas, sem markdown, sem `====`, sem emojis, sem "
         "listas com marcadores. Só números e valores relevantes, ditos como numa conversa. "
         "Ao concluir, chame a ferramenta terminate — ela apenas encerra a execução, então garanta que a "
-        "resposta final já foi dada de forma completa e falável na ação anterior."
+        "resposta final já foi dada de forma completa e falável na ação anterior. "
+        "Quando o usuário pedir para ver, abrir ou mostrar um site ou página específica, inclua no final "
+        "da sua resposta a tag [[OPEN_PANEL:url|título]], onde 'url' é o endereço completo (com https://) "
+        "e 'título' é um nome curto para o painel. Não use essa tag se o usuário não pediu para ver algo "
+        "visualmente. Nunca explique a tag ao usuário, ela é removida antes de ser exibida."
     )
     next_step_prompt: str = (
         "Escolha a ferramenta mais adequada para avançar a tarefa. "
@@ -193,6 +198,16 @@ def _pcm_to_wav_bytes(pcm_bytes, sample_rate=24000, channels=1, sample_width=2):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/stats")
+async def stats(x_auth_token: str = Header(default="")):
+    if AUTH_TOKEN and x_auth_token != AUTH_TOKEN:
+        raise HTTPException(status_code=401, detail="token inválido")
+    return {
+        "cpu_percent": psutil.cpu_percent(interval=0),
+        "memory_percent": psutil.virtual_memory().percent,
+    }
 
 
 @app.post("/run")
