@@ -68,6 +68,8 @@ class JarvisEngine(ToolCallAgent):
         "executar Python, executar comandos bash, ler/editar arquivos, buscar na web e planejar passos. "
         "Seja direto e eficiente. Ao concluir, chame a ferramenta terminate com um resumo claro do "
         "resultado final em português — esse resumo é o que será mostrado à pessoa."
+        "\n\n"
+        "Quando o usuário pedir para ver, abrir ou mostrar um site ou página específica, inclua no final da sua resposta a tag [[OPEN_PANEL:url|título]], onde 'url' é o endereço completo (com https://) e 'título' é um nome curto para o painel. Não use essa tag se o usuário não pediu para ver algo visualmente. Nunca explique a tag ao usuário, ela é removida antes de ser exibida."
     )
     next_step_prompt: str = (
         "Escolha a ferramenta mais adequada para avançar a tarefa. "
