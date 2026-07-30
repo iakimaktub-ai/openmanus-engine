@@ -3,6 +3,7 @@ import io
 import wave
 import base64
 import httpx
+import psutil
 
 # --- gera config/config.toml a partir de variáveis de ambiente (Secrets do Space) ---
 # precisa acontecer ANTES de importar qualquer coisa de app.* (o OpenManus lê o
@@ -133,6 +134,16 @@ def _pcm_to_wav_bytes(pcm_bytes, sample_rate=24000, channels=1, sample_width=2):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/stats")
+async def stats(x_auth_token: str = Header(default="")):
+    if AUTH_TOKEN and x_auth_token != AUTH_TOKEN:
+        raise HTTPException(status_code=401, detail="token inválido")
+    return {
+        "cpu_percent": psutil.cpu_percent(interval=0.3),
+        "memory_percent": psutil.virtual_memory().percent,
+    }
 
 
 @app.post("/run")
