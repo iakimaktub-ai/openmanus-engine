@@ -37,7 +37,10 @@ def _write_config():
         'engine = "Bing"\n'
         "fallback_engines = [\"DuckDuckGo\"]\n"
         'lang = "pt"\n'
-        'country = "br"\n'
+        'country = "br"\n\n'
+        "[browser]\n"
+        "headless = true\n"
+        "disable_security = true\n"
     )
     with open("config/config.toml", "w") as f:
         f.write(toml_content)
