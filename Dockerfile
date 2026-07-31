@@ -11,23 +11,12 @@ RUN git clone --depth 1 https://github.com/FoundationAgents/OpenManus.git /app/o
 
 WORKDIR /app/openmanus
 
-# Remove a dependência de navegador automatizado (browser-use/crawl4ai) do
-# código-fonte: essas libs puxam PyTorch inteiro (~1.5GB) e não são
-# necessárias pro motor de ações do Jarvis (python/bash/arquivos/busca).
-RUN sed -i \
-    -e '/browser_use_tool import BrowserUseTool/d' \
-    -e '/crawl4ai import Crawl4aiTool/d' \
-    -e '/"BrowserUseTool",/d' \
-    -e '/"Crawl4aiTool",/d' \
-    app/tool/__init__.py \
- && sed -i \
-    -e '/from app.agent.browser import BrowserAgent/d' \
-    -e '/"BrowserAgent",/d' \
-    app/agent/__init__.py
-
-# requirements.txt enxuto (sem browser-use, browsergym, gymnasium, crawl4ai, playwright)
+# Navegação real do Jarvis (browse_website) precisa de BrowserUseTool/BrowserAgent
+# e de um Chromium instalado — mantemos o código-fonte original do OpenManus intacto
+# (sem o sed que os removia) e instalamos o browser via Playwright abaixo.
 COPY requirements.txt /app/openmanus/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
+RUN playwright install --with-deps chromium
 
 # Pré-baixa o arquivo de tokenização (evita depender disso em tempo de execução)
 ENV TIKTOKEN_CACHE_DIR=/app/openmanus/.tiktoken_cache
