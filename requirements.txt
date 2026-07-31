@@ -35,3 +35,4 @@ setuptools~=75.8.0
 structlog
 
 higgsfield-client
+browser-use~=0.1.40
