@@ -97,6 +97,7 @@ from pydantic import BaseModel, Field
 from app.agent.toolcall import ToolCallAgent
 from app.tool import (
     Bash,
+    BrowserUseTool,
     PlanningTool,
     StrReplaceEditor,
     Terminate,
