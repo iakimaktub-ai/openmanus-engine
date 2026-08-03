@@ -14,6 +14,17 @@ WORKDIR /app/openmanus
 # Navegação real do Jarvis (browse_website) precisa de BrowserUseTool/BrowserAgent
 # e de um Chromium instalado — mantemos o código-fonte original do OpenManus intacto
 # (sem o sed que os removia) e instalamos o browser via Playwright abaixo.
+#
+# app/agent/browser.py importa SandboxBrowserTool só como fallback de nome de
+# ferramenta (nunca instanciada — o BrowserAgent usa só BrowserUseTool()), mas essa
+# importação arrasta o pacote `daytona` (sandboxing cloud, não usado neste fork e
+# nunca esteve no requirements.txt). Removemos só essa importação e seu fallback,
+# mantendo BrowserAgent/BrowserUseTool 100% funcionais.
+RUN sed -i \
+    -e '/from app.tool.sandbox.sb_browser_tool import SandboxBrowserTool/d' \
+    -e '/^        if not browser_tool:$/,/^            )$/d' \
+    app/agent/browser.py
+
 COPY requirements.txt /app/openmanus/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 RUN playwright install --with-deps chromium
