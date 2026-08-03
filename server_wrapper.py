@@ -148,6 +148,7 @@ class JarvisEngine(ToolCallAgent):
             Bash(),
             StrReplaceEditor(),
             WebSearch(),
+            BrowserUseTool(),
             PlanningTool(),
             Terminate(),
         )
