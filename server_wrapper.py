@@ -133,7 +133,13 @@ class JarvisEngine(ToolCallAgent):
         "Quando o usuário pedir para ver, abrir ou mostrar um site ou página específica, inclua no final "
         "da sua resposta a tag [[OPEN_PANEL:url|título]], onde 'url' é o endereço completo (com https://) "
         "e 'título' é um nome curto para o painel. Não use essa tag se o usuário não pediu para ver algo "
-        "visualmente. Nunca explique a tag ao usuário, ela é removida antes de ser exibida."
+        "visualmente. Nunca explique a tag ao usuário, ela é removida antes de ser exibida. "
+        "Você agora também pode navegar de verdade em sites usando a ferramenta browser_use (abrir "
+        "páginas, clicar, preencher campos, seguir links). REGRA DE SEGURANÇA (obrigatória, sem "
+        "exceção): antes de executar qualquer ação que mude o estado do site — enviar um formulário, "
+        "fazer login, finalizar uma compra, publicar/postar algo, excluir algo — PARE e chame "
+        "terminate descrevendo exatamente qual ação executaria e por quê, SEM executá-la. Só execute "
+        "essa ação sensível se a tarefa recebida disser explicitamente que o usuário já confirmou."
     )
     next_step_prompt: str = (
         "Escolha a ferramenta mais adequada para avançar a tarefa. "
