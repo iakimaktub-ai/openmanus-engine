@@ -11,23 +11,23 @@ RUN git clone --depth 1 https://github.com/FoundationAgents/OpenManus.git /app/o
 
 WORKDIR /app/openmanus
 
-# Remove a dependência de navegador automatizado (browser-use/crawl4ai) do
-# código-fonte: essas libs puxam PyTorch inteiro (~1.5GB) e não são
-# necessárias pro motor de ações do Jarvis (python/bash/arquivos/busca).
+# Navegação real do Jarvis (browse_website) precisa de BrowserUseTool/BrowserAgent
+# e de um Chromium instalado — mantemos o código-fonte original do OpenManus intacto
+# (sem o sed que os removia) e instalamos o browser via Playwright abaixo.
+#
+# app/agent/browser.py importa SandboxBrowserTool só como fallback de nome de
+# ferramenta (nunca instanciada — o BrowserAgent usa só BrowserUseTool()), mas essa
+# importação arrasta o pacote `daytona` (sandboxing cloud, não usado neste fork e
+# nunca esteve no requirements.txt). Removemos só essa importação e seu fallback,
+# mantendo BrowserAgent/BrowserUseTool 100% funcionais.
 RUN sed -i \
-    -e '/browser_use_tool import BrowserUseTool/d' \
-    -e '/crawl4ai import Crawl4aiTool/d' \
-    -e '/"BrowserUseTool",/d' \
-    -e '/"Crawl4aiTool",/d' \
-    app/tool/__init__.py \
- && sed -i \
-    -e '/from app.agent.browser import BrowserAgent/d' \
-    -e '/"BrowserAgent",/d' \
-    app/agent/__init__.py
+    -e '/from app.tool.sandbox.sb_browser_tool import SandboxBrowserTool/d' \
+    -e '/^        if not browser_tool:$/,/^            )$/d' \
+    app/agent/browser.py
 
-# requirements.txt enxuto (sem browser-use, browsergym, gymnasium, crawl4ai, playwright)
 COPY requirements.txt /app/openmanus/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
+RUN playwright install --with-deps chromium
 
 # Pré-baixa o arquivo de tokenização (evita depender disso em tempo de execução)
 ENV TIKTOKEN_CACHE_DIR=/app/openmanus/.tiktoken_cache
