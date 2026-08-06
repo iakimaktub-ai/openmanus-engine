@@ -396,7 +396,12 @@ async def run_task(req: TaskRequest, x_auth_token: str = Header(default="")):
     if not req.task or not req.task.strip():
         raise HTTPException(status_code=400, detail="task vazia")
 
-    if req.session_id and _browser_session["session_id"] == req.session_id:
+    if req.session_id:
+        if _browser_session["session_id"] != req.session_id:
+            raise HTTPException(
+                status_code=410,
+                detail="sessão de navegador expirada ou inexistente; abra o painel de navegador novamente",
+            )
         agent = _browser_session["agent"]
         _browser_session["last_activity"] = time.time()
     else:
