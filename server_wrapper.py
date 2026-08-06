@@ -173,7 +173,10 @@ class JarvisEngine(ToolCallAgent):
 # sessões simultâneas). display/porta fixos porque só existe uma sessão.
 BROWSER_DISPLAY = ":99"
 BROWSER_VNC_PORT = 5999
-BROWSER_SESSION_TIMEOUT_SECONDS = 300
+# 180s (3 min) em vez de 300s: no plano free do Render (limite de 512MB), cada
+# minuto extra com Xvfb+x11vnc+Chromium headful ativos e ociosos é memória que
+# poderia já ter sido liberada — reduz a chance de OOM sem prejudicar o uso real.
+BROWSER_SESSION_TIMEOUT_SECONDS = 180
 
 _browser_session = {
     "session_id": None,
@@ -192,8 +195,11 @@ async def _start_browser_session() -> str:
     if _browser_session["session_id"]:
         return _browser_session["session_id"]
 
+    # resolução/profundidade de cor reduzidas (era 1280x800x24): o noVNC do painel
+    # escala automaticamente pro tamanho reportado pelo servidor VNC, então isso
+    # não quebra a exibição — só reduz o framebuffer do Xvfb e o tráfego do x11vnc.
     xvfb_proc = subprocess.Popen(
-        ["Xvfb", BROWSER_DISPLAY, "-screen", "0", "1280x800x24"],
+        ["Xvfb", BROWSER_DISPLAY, "-screen", "0", "1024x768x16"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     # dá tempo do Xvfb terminar de subir antes do x11vnc/Chrome tentarem usar o display
@@ -214,7 +220,31 @@ async def _start_browser_session() -> str:
     live_tool.browser = BrowserUseBrowser(BrowserConfig(
         headless=False,
         disable_security=True,
-        extra_chromium_args=["--disable-dev-shm-usage"],
+        # flags de baixo consumo de memória: no plano free do Render (limite de
+        # 512MB) o Chromium headful sozinho já passava de 300-400MB, o que somado
+        # ao Python/Xvfb/x11vnc estourava o limite (evento real: "Ran out of
+        # memory (used over 512MB)"). Essas flags desligam GPU/compositor,
+        # rede/telemetria em segundo plano e limitam o heap do V8, sem afetar a
+        # navegação em si.
+        extra_chromium_args=[
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-software-rasterizer",
+            "--disable-extensions",
+            "--disable-background-networking",
+            "--disable-background-timer-throttling",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-breakpad",
+            "--disable-component-update",
+            "--disable-default-apps",
+            "--disable-sync",
+            "--disable-translate",
+            "--metrics-recording-only",
+            "--mute-audio",
+            "--no-first-run",
+            "--renderer-process-limit=1",
+            "--js-flags=--max-old-space-size=256",
+        ],
     ))
 
     session_id = f"sess_{uuid.uuid4().hex[:12]}"
