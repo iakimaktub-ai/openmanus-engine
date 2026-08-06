@@ -2,6 +2,11 @@ import os
 import io
 import wave
 import base64
+import asyncio
+import subprocess
+import time
+import uuid
+from typing import Optional
 import httpx
 import psutil
 
@@ -106,6 +111,7 @@ from app.tool import (
 )
 from app.tool.python_execute import PythonExecute
 from app.logger import logger
+from browser_use import Browser as BrowserUseBrowser, BrowserConfig
 
 
 class JarvisEngine(ToolCallAgent):
