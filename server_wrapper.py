@@ -211,7 +211,11 @@ async def _start_browser_session() -> str:
     os.environ["DISPLAY"] = BROWSER_DISPLAY
     agent = JarvisEngine()
     live_tool = agent.available_tools.get_tool("browser_use")
-    live_tool.browser = BrowserUseBrowser(BrowserConfig(headless=False, disable_security=True))
+    live_tool.browser = BrowserUseBrowser(BrowserConfig(
+        headless=False,
+        disable_security=True,
+        extra_chromium_args=["--disable-dev-shm-usage"],
+    ))
 
     session_id = f"sess_{uuid.uuid4().hex[:12]}"
     _browser_session.update({
