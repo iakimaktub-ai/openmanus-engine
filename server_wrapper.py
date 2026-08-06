@@ -168,6 +168,88 @@ class JarvisEngine(ToolCallAgent):
     special_tool_names: list[str] = Field(default_factory=lambda: [Terminate().name])
 
 
+# --- sessão de navegador ao vivo (Xvfb + Chrome headful + x11vnc) ---
+# Uma única sessão global ativa por vez (fora de escopo do design: múltiplas
+# sessões simultâneas). display/porta fixos porque só existe uma sessão.
+BROWSER_DISPLAY = ":99"
+BROWSER_VNC_PORT = 5999
+BROWSER_SESSION_TIMEOUT_SECONDS = 300
+
+_browser_session = {
+    "session_id": None,
+    "agent": None,
+    "xvfb_proc": None,
+    "x11vnc_proc": None,
+    "last_activity": 0.0,
+}
+_browser_session_lock = asyncio.Lock()
+
+
+async def _start_browser_session() -> str:
+    """Sobe Xvfb + x11vnc e cria um JarvisEngine com o Chrome em modo headful
+    apontando pro display virtual. Idempotente: se já existe sessão ativa,
+    devolve o session_id existente em vez de subir tudo de novo."""
+    if _browser_session["session_id"]:
+        return _browser_session["session_id"]
+
+    xvfb_proc = subprocess.Popen(
+        ["Xvfb", BROWSER_DISPLAY, "-screen", "0", "1280x800x24"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    # dá tempo do Xvfb terminar de subir antes do x11vnc/Chrome tentarem usar o display
+    await asyncio.sleep(1.5)
+
+    x11vnc_proc = subprocess.Popen(
+        [
+            "x11vnc", "-display", BROWSER_DISPLAY,
+            "-rfbport", str(BROWSER_VNC_PORT),
+            "-forever", "-shared", "-nopw", "-quiet",
+        ],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+
+    os.environ["DISPLAY"] = BROWSER_DISPLAY
+    agent = JarvisEngine()
+    live_tool = agent.available_tools.get_tool("browser_use")
+    live_tool.browser = BrowserUseBrowser(BrowserConfig(headless=False, disable_security=True))
+
+    session_id = f"sess_{uuid.uuid4().hex[:12]}"
+    _browser_session.update({
+        "session_id": session_id,
+        "agent": agent,
+        "xvfb_proc": xvfb_proc,
+        "x11vnc_proc": x11vnc_proc,
+        "last_activity": time.time(),
+    })
+    return session_id
+
+
+def _stop_browser_session():
+    """Mata Xvfb/x11vnc e limpa o estado global da sessão."""
+    for key in ("x11vnc_proc", "xvfb_proc"):
+        proc = _browser_session.get(key)
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+    _browser_session.update({
+        "session_id": None,
+        "agent": None,
+        "xvfb_proc": None,
+        "x11vnc_proc": None,
+        "last_activity": 0.0,
+    })
+
+
+async def _browser_session_reaper():
+    """Encerra a sessão de navegador se ficar 5 min sem atividade (chamada de
+    browse_website nem tráfego WebSocket do painel ao vivo)."""
+    while True:
+        await asyncio.sleep(30)
+        session_id = _browser_session["session_id"]
+        if session_id and (time.time() - _browser_session["last_activity"]) > BROWSER_SESSION_TIMEOUT_SECONDS:
+            logger.info(f"encerrando sessão de navegador {session_id} por inatividade")
+            _stop_browser_session()
+
+
 app = FastAPI(title="OpenManus Engine for Jarvis")
 # Origens liberadas. TEMPORARIAMENTE em "*" (qualquer origem) para confirmar que o
 # CORS é mesmo a causa. Depois de testar com sucesso, trocar para a lista específica:
