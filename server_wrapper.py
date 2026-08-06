@@ -271,6 +271,7 @@ AUTH_TOKEN = os.environ.get("WRAPPER_AUTH_TOKEN", "").strip()
 
 class TaskRequest(BaseModel):
     task: str
+    session_id: Optional[str] = None
 
 
 class TTSRequest(BaseModel):
@@ -339,7 +340,12 @@ async def run_task(req: TaskRequest, x_auth_token: str = Header(default="")):
     if not req.task or not req.task.strip():
         raise HTTPException(status_code=400, detail="task vazia")
 
-    agent = JarvisEngine()
+    if req.session_id and _browser_session["session_id"] == req.session_id:
+        agent = _browser_session["agent"]
+        _browser_session["last_activity"] = time.time()
+    else:
+        agent = JarvisEngine()
+
     try:
         raw_result = await agent.run(req.task)
         result = _extract_final_answer(raw_result)
