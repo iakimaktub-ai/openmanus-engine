@@ -94,7 +94,7 @@ def _extract_final_answer(raw: str) -> str:
 
 
 # --- agora sim, o resto dos imports ---
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
@@ -263,6 +263,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.on_event("startup")
+async def _on_startup():
+    asyncio.create_task(_browser_session_reaper())
+
 # Token simples pra ninguém além do seu Jarvis conseguir usar sua chave/quota.
 # Configure o mesmo valor como Secret WRAPPER_AUTH_TOKEN aqui no Space, e
 # cole esse mesmo valor no campo de token do Jarvis.
@@ -330,6 +335,53 @@ async def browse_stop(x_auth_token: str = Header(default="")):
     async with _browser_session_lock:
         _stop_browser_session()
     return {"status": "ok"}
+
+
+@app.websocket("/browse/ws/{session_id}")
+async def browse_ws(websocket: WebSocket, session_id: str):
+    token = websocket.query_params.get("token", "")
+    if AUTH_TOKEN and token != AUTH_TOKEN:
+        await websocket.close(code=4401)
+        return
+    if _browser_session["session_id"] != session_id:
+        await websocket.close(code=4404)
+        return
+
+    await websocket.accept()
+    try:
+        reader, writer = await asyncio.open_connection("127.0.0.1", BROWSER_VNC_PORT)
+    except OSError as e:
+        logger.error(f"erro conectando ao x11vnc local: {e}")
+        await websocket.close(code=1011)
+        return
+
+    async def ws_to_vnc():
+        try:
+            while True:
+                data = await websocket.receive_bytes()
+                _browser_session["last_activity"] = time.time()
+                writer.write(data)
+                await writer.drain()
+        except WebSocketDisconnect:
+            pass
+
+    async def vnc_to_ws():
+        try:
+            while True:
+                data = await reader.read(65536)
+                if not data:
+                    break
+                _browser_session["last_activity"] = time.time()
+                await websocket.send_bytes(data)
+        except Exception:
+            pass
+
+    task_a = asyncio.create_task(ws_to_vnc())
+    task_b = asyncio.create_task(vnc_to_ws())
+    done, pending = await asyncio.wait({task_a, task_b}, return_when=asyncio.FIRST_COMPLETED)
+    for t in pending:
+        t.cancel()
+    writer.close()
 
 
 @app.post("/run")
