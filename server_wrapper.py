@@ -309,6 +309,28 @@ async def stats(x_auth_token: str = Header(default="")):
     }
 
 
+@app.post("/browse/start")
+async def browse_start(x_auth_token: str = Header(default="")):
+    if AUTH_TOKEN and x_auth_token != AUTH_TOKEN:
+        raise HTTPException(status_code=401, detail="token inválido")
+    async with _browser_session_lock:
+        try:
+            session_id = await _start_browser_session()
+        except Exception as e:
+            logger.error(f"erro iniciando sessão de navegador ao vivo: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    return {"session_id": session_id}
+
+
+@app.post("/browse/stop")
+async def browse_stop(x_auth_token: str = Header(default="")):
+    if AUTH_TOKEN and x_auth_token != AUTH_TOKEN:
+        raise HTTPException(status_code=401, detail="token inválido")
+    async with _browser_session_lock:
+        _stop_browser_session()
+    return {"status": "ok"}
+
+
 @app.post("/run")
 async def run_task(req: TaskRequest, x_auth_token: str = Header(default="")):
     if AUTH_TOKEN and x_auth_token != AUTH_TOKEN:
