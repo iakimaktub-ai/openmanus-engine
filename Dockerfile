@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git curl ca-certificates build-essential \
+    git curl ca-certificates build-essential xvfb x11vnc \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
