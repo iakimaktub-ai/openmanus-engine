@@ -448,6 +448,10 @@ async def browse_ws(websocket: WebSocket, session_id: str):
     for t in pending:
         t.cancel()
     writer.close()
+    try:
+        await websocket.close()
+    except RuntimeError:
+        pass
 
 
 @app.post("/run")
