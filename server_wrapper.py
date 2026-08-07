@@ -252,7 +252,6 @@ async def _start_browser_session() -> str:
         extra_chromium_args=[
             "--disable-dev-shm-usage",
             "--disable-gpu",
-            "--disable-software-rasterizer",
             "--disable-extensions",
             "--disable-background-networking",
             "--disable-background-timer-throttling",
