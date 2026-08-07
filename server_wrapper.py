@@ -167,6 +167,28 @@ class JarvisEngine(ToolCallAgent):
     )
     special_tool_names: list[str] = Field(default_factory=lambda: [Terminate().name])
 
+    # True só para o agente da sessão de navegador ao vivo (ver _start_browser_session).
+    # ToolCallAgent.run() chama self.cleanup() em um `finally` ao fim de TODA tarefa,
+    # e o cleanup() padrão da BrowserUseTool fecha o Chromium/contexto de verdade
+    # (não só solta a referência) — isso apagava o browser compartilhado a cada
+    # chamada de /run, mesmo com o painel ainda aberto (a tela VNC ficava preta
+    # de novo pouco depois de renderizar a página real). Aqui pulamos só a
+    # ferramenta browser_use nesse caso; o browser é fechado explicitamente em
+    # _stop_browser_session() quando a sessão de fato termina.
+    keep_browser_alive: bool = False
+
+    async def cleanup(self):
+        for tool_name, tool_instance in self.available_tools.tool_map.items():
+            if self.keep_browser_alive and tool_name == "browser_use":
+                continue
+            if hasattr(tool_instance, "cleanup") and asyncio.iscoroutinefunction(
+                tool_instance.cleanup
+            ):
+                try:
+                    await tool_instance.cleanup()
+                except Exception as e:
+                    logger.error(f"erro limpando ferramenta '{tool_name}': {e}", exc_info=True)
+
 
 # --- sessão de navegador ao vivo (Xvfb + Chrome headful + x11vnc) ---
 # Uma única sessão global ativa por vez (fora de escopo do design: múltiplas
@@ -216,6 +238,7 @@ async def _start_browser_session() -> str:
 
     os.environ["DISPLAY"] = BROWSER_DISPLAY
     agent = JarvisEngine()
+    agent.keep_browser_alive = True
     live_tool = agent.available_tools.get_tool("browser_use")
     live_tool.browser = BrowserUseBrowser(BrowserConfig(
         headless=False,
@@ -258,8 +281,18 @@ async def _start_browser_session() -> str:
     return session_id
 
 
-def _stop_browser_session():
-    """Mata Xvfb/x11vnc e limpa o estado global da sessão."""
+async def _stop_browser_session():
+    """Fecha o browser_use de verdade (Chromium/contexto), mata Xvfb/x11vnc e
+    limpa o estado global da sessão. Precisa fechar o browser aqui porque, com
+    keep_browser_alive=True, o cleanup automático do agente pula essa tool."""
+    agent = _browser_session.get("agent")
+    if agent is not None:
+        browser_tool = agent.available_tools.get_tool("browser_use")
+        if browser_tool is not None:
+            try:
+                await browser_tool.cleanup()
+            except Exception as e:
+                logger.error(f"erro fechando browser da sessão: {e}", exc_info=True)
     for key in ("x11vnc_proc", "xvfb_proc"):
         proc = _browser_session.get(key)
         if proc is not None and proc.poll() is None:
@@ -281,7 +314,7 @@ async def _browser_session_reaper():
         session_id = _browser_session["session_id"]
         if session_id and (time.time() - _browser_session["last_activity"]) > BROWSER_SESSION_TIMEOUT_SECONDS:
             logger.info(f"encerrando sessão de navegador {session_id} por inatividade")
-            _stop_browser_session()
+            await _stop_browser_session()
 
 
 app = FastAPI(title="OpenManus Engine for Jarvis")
@@ -367,7 +400,7 @@ async def browse_stop(x_auth_token: str = Header(default="")):
     if AUTH_TOKEN and x_auth_token != AUTH_TOKEN:
         raise HTTPException(status_code=401, detail="token inválido")
     async with _browser_session_lock:
-        _stop_browser_session()
+        await _stop_browser_session()
     return {"status": "ok"}
 
 
