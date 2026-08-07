@@ -381,6 +381,65 @@ async def stats(x_auth_token: str = Header(default="")):
     }
 
 
+def _list_x11vnc_processes() -> list:
+    """Varre /proc por processos cujo cmdline contém 'x11vnc', sem depender de
+    pgrep/procps (não instalado na imagem). Usado só para diagnóstico temporário
+    de por que o relay do painel VNC não entrega bytes mesmo com a sessão fresca."""
+    found = []
+    try:
+        for pid_str in os.listdir("/proc"):
+            if not pid_str.isdigit():
+                continue
+            try:
+                with open(f"/proc/{pid_str}/cmdline", "rb") as f:
+                    cmdline = f.read().replace(b"\x00", b" ").strip().decode(errors="replace")
+            except (FileNotFoundError, ProcessLookupError, PermissionError):
+                continue
+            if "x11vnc" in cmdline:
+                found.append({"pid": pid_str, "cmdline": cmdline})
+    except FileNotFoundError:
+        found.append({"error": "/proc indisponível (não é Linux?)"})
+    return found
+
+
+@app.get("/browse/debug")
+async def browse_debug(x_auth_token: str = Header(default="")):
+    """Endpoint de diagnóstico TEMPORÁRIO: investiga por que o relay do painel VNC
+    abre o WebSocket mas não entrega bytes de RFB handshake nem em sessão fresca.
+    Remover depois que a causa raiz for confirmada e corrigida."""
+    if AUTH_TOKEN and x_auth_token != AUTH_TOKEN:
+        raise HTTPException(status_code=401, detail="token inválido")
+
+    xvfb_proc = _browser_session.get("xvfb_proc")
+    x11vnc_proc = _browser_session.get("x11vnc_proc")
+
+    probe_result = None
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection("127.0.0.1", BROWSER_VNC_PORT), timeout=3
+        )
+        try:
+            data = await asyncio.wait_for(reader.read(64), timeout=3)
+            probe_result = {"connected": True, "bytes_received": len(data), "data_repr": repr(data)}
+        except asyncio.TimeoutError:
+            probe_result = {"connected": True, "bytes_received": 0, "data_repr": None, "note": "conectou mas nao recebeu handshake em 3s"}
+        finally:
+            writer.close()
+    except Exception as e:
+        probe_result = {"connected": False, "error": f"{type(e).__name__}: {e}"}
+
+    return {
+        "session_id": _browser_session.get("session_id"),
+        "last_activity_ago_s": (time.time() - _browser_session["last_activity"]) if _browser_session.get("last_activity") else None,
+        "xvfb_proc_alive": (xvfb_proc.poll() is None) if xvfb_proc is not None else None,
+        "xvfb_proc_exit_code": xvfb_proc.poll() if xvfb_proc is not None else None,
+        "x11vnc_proc_alive": (x11vnc_proc.poll() is None) if x11vnc_proc is not None else None,
+        "x11vnc_proc_exit_code": x11vnc_proc.poll() if x11vnc_proc is not None else None,
+        "system_wide_x11vnc_processes": _list_x11vnc_processes(),
+        "self_probe_127.0.0.1:5999": probe_result,
+    }
+
+
 @app.post("/browse/start")
 async def browse_start(x_auth_token: str = Header(default="")):
     if AUTH_TOKEN and x_auth_token != AUTH_TOKEN:
