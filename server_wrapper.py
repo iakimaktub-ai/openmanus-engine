@@ -442,6 +442,37 @@ async def browse_debug(x_auth_token: str = Header(default="")):
     except FileNotFoundError:
         x11vnc_log_tail = None
 
+    # sonda extra: em vez de TCP puro (probe acima), manda um handshake HTTP de
+    # upgrade websocket de verdade pro x11vnc, pra confirmar a hipotese de que
+    # ele exige o proprio handshake WS no socket (nao aceita bytes RFB crus).
+    ws_handshake_probe = None
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection("127.0.0.1", BROWSER_VNC_PORT), timeout=3
+        )
+        try:
+            request = (
+                "GET / HTTP/1.1\r\n"
+                "Host: 127.0.0.1\r\n"
+                "Upgrade: websocket\r\n"
+                "Connection: Upgrade\r\n"
+                "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+                "Sec-WebSocket-Version: 13\r\n"
+                "Sec-WebSocket-Protocol: binary\r\n"
+                "\r\n"
+            )
+            writer.write(request.encode())
+            await writer.drain()
+            try:
+                data = await asyncio.wait_for(reader.read(512), timeout=3)
+                ws_handshake_probe = {"connected": True, "bytes_received": len(data), "data_repr": repr(data)}
+            except asyncio.TimeoutError:
+                ws_handshake_probe = {"connected": True, "bytes_received": 0, "data_repr": None, "note": "conectou, mandou handshake WS, nao recebeu resposta em 3s"}
+        finally:
+            writer.close()
+    except Exception as e:
+        ws_handshake_probe = {"connected": False, "error": f"{type(e).__name__}: {e}"}
+
     return {
         "session_id": _browser_session.get("session_id"),
         "last_activity_ago_s": (time.time() - _browser_session["last_activity"]) if _browser_session.get("last_activity") else None,
@@ -451,6 +482,7 @@ async def browse_debug(x_auth_token: str = Header(default="")):
         "x11vnc_proc_exit_code": x11vnc_proc.poll() if x11vnc_proc is not None else None,
         "system_wide_x11vnc_processes": _list_x11vnc_processes(),
         "self_probe_127.0.0.1:5999": probe_result,
+        "ws_handshake_probe_127.0.0.1:5999": ws_handshake_probe,
         "x11vnc_log_tail": x11vnc_log_tail,
     }
 
