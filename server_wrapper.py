@@ -195,6 +195,9 @@ class JarvisEngine(ToolCallAgent):
 # sessões simultâneas). display/porta fixos porque só existe uma sessão.
 BROWSER_DISPLAY = ":99"
 BROWSER_VNC_PORT = 5999
+# log de diagnóstico TEMPORÁRIO do x11vnc (stdout/stderr iam pro DEVNULL antes,
+# tornando invisível qualquer erro de inicialização). Remover junto com /browse/debug.
+X11VNC_LOG_PATH = "/tmp/x11vnc_debug.log"
 # 180s (3 min) em vez de 300s: no plano free do Render (limite de 512MB), cada
 # minuto extra com Xvfb+x11vnc+Chromium headful ativos e ociosos é memória que
 # poderia já ter sido liberada — reduz a chance de OOM sem prejudicar o uso real.
@@ -227,13 +230,17 @@ async def _start_browser_session() -> str:
     # dá tempo do Xvfb terminar de subir antes do x11vnc/Chrome tentarem usar o display
     await asyncio.sleep(1.5)
 
+    # -quiet removido e stdout/stderr apontados pra um log (em vez de DEVNULL)
+    # só para o diagnóstico temporário em /browse/debug: precisamos ver o que
+    # o x11vnc realmente loga ao aceitar uma conexão e nunca mandar o handshake.
+    x11vnc_log_file = open(X11VNC_LOG_PATH, "w")
     x11vnc_proc = subprocess.Popen(
         [
             "x11vnc", "-display", BROWSER_DISPLAY,
             "-rfbport", str(BROWSER_VNC_PORT),
-            "-forever", "-shared", "-nopw", "-quiet",
+            "-forever", "-shared", "-nopw",
         ],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        stdout=x11vnc_log_file, stderr=subprocess.STDOUT,
     )
 
     os.environ["DISPLAY"] = BROWSER_DISPLAY
@@ -428,6 +435,13 @@ async def browse_debug(x_auth_token: str = Header(default="")):
     except Exception as e:
         probe_result = {"connected": False, "error": f"{type(e).__name__}: {e}"}
 
+    x11vnc_log_tail = None
+    try:
+        with open(X11VNC_LOG_PATH, "r", errors="replace") as f:
+            x11vnc_log_tail = f.read()[-4000:]
+    except FileNotFoundError:
+        x11vnc_log_tail = None
+
     return {
         "session_id": _browser_session.get("session_id"),
         "last_activity_ago_s": (time.time() - _browser_session["last_activity"]) if _browser_session.get("last_activity") else None,
@@ -437,6 +451,7 @@ async def browse_debug(x_auth_token: str = Header(default="")):
         "x11vnc_proc_exit_code": x11vnc_proc.poll() if x11vnc_proc is not None else None,
         "system_wide_x11vnc_processes": _list_x11vnc_processes(),
         "self_probe_127.0.0.1:5999": probe_result,
+        "x11vnc_log_tail": x11vnc_log_tail,
     }
 
 
