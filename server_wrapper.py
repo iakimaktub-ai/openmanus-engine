@@ -233,9 +233,14 @@ async def _start_browser_session() -> str:
     # -quiet removido e stdout/stderr apontados pra um log (em vez de DEVNULL)
     # só para o diagnóstico temporário em /browse/debug: precisamos ver o que
     # o x11vnc realmente loga ao aceitar uma conexão e nunca mandar o handshake.
+    # 'stdbuf -oL -eL' forca line-buffering: sem isso, a libc do x11vnc usa
+    # full-buffering (stdout nao e um tty) e as linhas só chegam no arquivo
+    # quando o buffer interno enche ou o processo morre, fazendo o log parecer
+    # vazio/fora de ordem mesmo com conexões já aceitas.
     x11vnc_log_file = open(X11VNC_LOG_PATH, "w")
     x11vnc_proc = subprocess.Popen(
         [
+            "stdbuf", "-oL", "-eL",
             "x11vnc", "-display", BROWSER_DISPLAY,
             "-rfbport", str(BROWSER_VNC_PORT),
             "-forever", "-shared", "-nopw",
