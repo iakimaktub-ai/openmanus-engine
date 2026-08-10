@@ -209,6 +209,13 @@ _browser_session = {
     "xvfb_proc": None,
     "x11vnc_proc": None,
     "last_activity": 0.0,
+    # True enquanto um /run está executando nesta sessão. O reaper roda a cada 30s
+    # em paralelo e só olhava last_activity (setado uma vez, antes do agent.run());
+    # uma tarefa real que passasse de BROWSER_SESSION_TIMEOUT_SECONDS derrubava
+    # Xvfb/x11vnc/Chromium com o agente ainda executando. Essa flag garante que o
+    # reaper nunca encerra uma sessão com tarefa em andamento, independentemente de
+    # quanto tempo ela leve.
+    "in_progress": False,
 }
 _browser_session_lock = asyncio.Lock()
 
@@ -314,15 +321,20 @@ async def _stop_browser_session():
         "xvfb_proc": None,
         "x11vnc_proc": None,
         "last_activity": 0.0,
+        "in_progress": False,
     })
 
 
 async def _browser_session_reaper():
-    """Encerra a sessão de navegador se ficar 5 min sem atividade (chamada de
-    browse_website nem tráfego WebSocket do painel ao vivo)."""
+    """Encerra a sessão de navegador se ficar 3 min sem atividade (chamada de
+    browse_website nem tráfego WebSocket do painel ao vivo). Nunca encerra
+    enquanto um /run está em andamento (in_progress=True), mesmo que essa tarefa
+    já tenha passado do timeout de inatividade."""
     while True:
         await asyncio.sleep(30)
         session_id = _browser_session["session_id"]
+        if _browser_session["in_progress"]:
+            continue
         if session_id and (time.time() - _browser_session["last_activity"]) > BROWSER_SESSION_TIMEOUT_SECONDS:
             logger.info(f"encerrando sessão de navegador {session_id} por inatividade")
             await _stop_browser_session()
@@ -581,6 +593,7 @@ async def run_task(req: TaskRequest, x_auth_token: str = Header(default="")):
             )
         agent = _browser_session["agent"]
         _browser_session["last_activity"] = time.time()
+        _browser_session["in_progress"] = True
     else:
         agent = JarvisEngine()
 
@@ -591,6 +604,13 @@ async def run_task(req: TaskRequest, x_auth_token: str = Header(default="")):
     except Exception as e:
         logger.error(f"erro executando tarefa: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if req.session_id:
+            # atualiza last_activity ao FIM da tarefa (não só no início), para que
+            # a contagem de inatividade do reaper recomece da conclusão real, e
+            # libera a flag que bloqueava o reaper durante a execução.
+            _browser_session["last_activity"] = time.time()
+            _browser_session["in_progress"] = False
 
 
 @app.post("/tts")
