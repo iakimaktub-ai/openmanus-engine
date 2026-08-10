@@ -195,9 +195,6 @@ class JarvisEngine(ToolCallAgent):
 # sessões simultâneas). display/porta fixos porque só existe uma sessão.
 BROWSER_DISPLAY = ":99"
 BROWSER_VNC_PORT = 5999
-# log de diagnóstico TEMPORÁRIO do x11vnc (stdout/stderr iam pro DEVNULL antes,
-# tornando invisível qualquer erro de inicialização). Remover junto com /browse/debug.
-X11VNC_LOG_PATH = "/tmp/x11vnc_debug.log"
 # 180s (3 min) em vez de 300s: no plano free do Render (limite de 512MB), cada
 # minuto extra com Xvfb+x11vnc+Chromium headful ativos e ociosos é memória que
 # poderia já ter sido liberada — reduz a chance de OOM sem prejudicar o uso real.
@@ -251,22 +248,13 @@ async def _start_browser_session() -> str:
     # dá tempo do Xvfb terminar de subir antes do x11vnc/Chrome tentarem usar o display
     await asyncio.sleep(1.5)
 
-    # -quiet removido e stdout/stderr apontados pra um log (em vez de DEVNULL)
-    # só para o diagnóstico temporário em /browse/debug: precisamos ver o que
-    # o x11vnc realmente loga ao aceitar uma conexão e nunca mandar o handshake.
-    # 'stdbuf -oL -eL' forca line-buffering: sem isso, a libc do x11vnc usa
-    # full-buffering (stdout nao e um tty) e as linhas só chegam no arquivo
-    # quando o buffer interno enche ou o processo morre, fazendo o log parecer
-    # vazio/fora de ordem mesmo com conexões já aceitas.
-    x11vnc_log_file = open(X11VNC_LOG_PATH, "w")
     x11vnc_proc = subprocess.Popen(
         [
-            "stdbuf", "-oL", "-eL",
             "x11vnc", "-display", BROWSER_DISPLAY,
             "-rfbport", str(BROWSER_VNC_PORT),
-            "-forever", "-shared", "-nopw",
+            "-forever", "-shared", "-nopw", "-quiet",
         ],
-        stdout=x11vnc_log_file, stderr=subprocess.STDOUT,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
 
     os.environ["DISPLAY"] = BROWSER_DISPLAY
@@ -416,105 +404,6 @@ async def stats(x_auth_token: str = Header(default="")):
     return {
         "cpu_percent": psutil.cpu_percent(interval=0),
         "memory_percent": psutil.virtual_memory().percent,
-    }
-
-
-def _list_x11vnc_processes() -> list:
-    """Varre /proc por processos cujo cmdline contém 'x11vnc', sem depender de
-    pgrep/procps (não instalado na imagem). Usado só para diagnóstico temporário
-    de por que o relay do painel VNC não entrega bytes mesmo com a sessão fresca."""
-    found = []
-    try:
-        for pid_str in os.listdir("/proc"):
-            if not pid_str.isdigit():
-                continue
-            try:
-                with open(f"/proc/{pid_str}/cmdline", "rb") as f:
-                    cmdline = f.read().replace(b"\x00", b" ").strip().decode(errors="replace")
-            except (FileNotFoundError, ProcessLookupError, PermissionError):
-                continue
-            if "x11vnc" in cmdline:
-                found.append({"pid": pid_str, "cmdline": cmdline})
-    except FileNotFoundError:
-        found.append({"error": "/proc indisponível (não é Linux?)"})
-    return found
-
-
-@app.get("/browse/debug")
-async def browse_debug(x_auth_token: str = Header(default="")):
-    """Endpoint de diagnóstico TEMPORÁRIO: investiga por que o relay do painel VNC
-    abre o WebSocket mas não entrega bytes de RFB handshake nem em sessão fresca.
-    Remover depois que a causa raiz for confirmada e corrigida."""
-    if AUTH_TOKEN and x_auth_token != AUTH_TOKEN:
-        raise HTTPException(status_code=401, detail="token inválido")
-
-    xvfb_proc = _browser_session.get("xvfb_proc")
-    x11vnc_proc = _browser_session.get("x11vnc_proc")
-
-    probe_result = None
-    try:
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection("127.0.0.1", BROWSER_VNC_PORT), timeout=3
-        )
-        try:
-            data = await asyncio.wait_for(reader.read(64), timeout=3)
-            probe_result = {"connected": True, "bytes_received": len(data), "data_repr": repr(data)}
-        except asyncio.TimeoutError:
-            probe_result = {"connected": True, "bytes_received": 0, "data_repr": None, "note": "conectou mas nao recebeu handshake em 3s"}
-        finally:
-            writer.close()
-    except Exception as e:
-        probe_result = {"connected": False, "error": f"{type(e).__name__}: {e}"}
-
-    x11vnc_log_tail = None
-    try:
-        with open(X11VNC_LOG_PATH, "r", errors="replace") as f:
-            x11vnc_log_tail = f.read()[-4000:]
-    except FileNotFoundError:
-        x11vnc_log_tail = None
-
-    # sonda extra: em vez de TCP puro (probe acima), manda um handshake HTTP de
-    # upgrade websocket de verdade pro x11vnc, pra confirmar a hipotese de que
-    # ele exige o proprio handshake WS no socket (nao aceita bytes RFB crus).
-    ws_handshake_probe = None
-    try:
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection("127.0.0.1", BROWSER_VNC_PORT), timeout=3
-        )
-        try:
-            request = (
-                "GET / HTTP/1.1\r\n"
-                "Host: 127.0.0.1\r\n"
-                "Upgrade: websocket\r\n"
-                "Connection: Upgrade\r\n"
-                "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
-                "Sec-WebSocket-Version: 13\r\n"
-                "Sec-WebSocket-Protocol: binary\r\n"
-                "\r\n"
-            )
-            writer.write(request.encode())
-            await writer.drain()
-            try:
-                data = await asyncio.wait_for(reader.read(512), timeout=3)
-                ws_handshake_probe = {"connected": True, "bytes_received": len(data), "data_repr": repr(data)}
-            except asyncio.TimeoutError:
-                ws_handshake_probe = {"connected": True, "bytes_received": 0, "data_repr": None, "note": "conectou, mandou handshake WS, nao recebeu resposta em 3s"}
-        finally:
-            writer.close()
-    except Exception as e:
-        ws_handshake_probe = {"connected": False, "error": f"{type(e).__name__}: {e}"}
-
-    return {
-        "session_id": _browser_session.get("session_id"),
-        "last_activity_ago_s": (time.time() - _browser_session["last_activity"]) if _browser_session.get("last_activity") else None,
-        "xvfb_proc_alive": (xvfb_proc.poll() is None) if xvfb_proc is not None else None,
-        "xvfb_proc_exit_code": xvfb_proc.poll() if xvfb_proc is not None else None,
-        "x11vnc_proc_alive": (x11vnc_proc.poll() is None) if x11vnc_proc is not None else None,
-        "x11vnc_proc_exit_code": x11vnc_proc.poll() if x11vnc_proc is not None else None,
-        "system_wide_x11vnc_processes": _list_x11vnc_processes(),
-        "self_probe_127.0.0.1:5999": probe_result,
-        "ws_handshake_probe_127.0.0.1:5999": ws_handshake_probe,
-        "x11vnc_log_tail": x11vnc_log_tail,
     }
 
 
