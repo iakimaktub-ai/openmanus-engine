@@ -225,7 +225,21 @@ async def _start_browser_session() -> str:
     apontando pro display virtual. Idempotente: se já existe sessão ativa,
     devolve o session_id existente em vez de subir tudo de novo."""
     if _browser_session["session_id"]:
-        return _browser_session["session_id"]
+        xvfb_proc = _browser_session.get("xvfb_proc")
+        x11vnc_proc = _browser_session.get("x11vnc_proc")
+        xvfb_alive = xvfb_proc is not None and xvfb_proc.poll() is None
+        x11vnc_alive = x11vnc_proc is not None and x11vnc_proc.poll() is None
+        if xvfb_alive and x11vnc_alive:
+            return _browser_session["session_id"]
+        # Xvfb ou x11vnc morreu por conta própria (ex.: OOM kill), sem passar por
+        # _stop_browser_session(): o session_id ficou "zumbi" — reutilizá-lo faria
+        # o /browse/ws aceitar a conexão e fechar na hora com ConnectionRefusedError
+        # ao tentar falar com o x11vnc morto, deixando o canvas preto no painel.
+        logger.warning(
+            f"sessão de navegador {_browser_session['session_id']} tinha processo morto "
+            f"(xvfb_alive={xvfb_alive}, x11vnc_alive={x11vnc_alive}); descartando e subindo uma nova"
+        )
+        await _stop_browser_session()
 
     # resolução/profundidade de cor reduzidas (era 1280x800x24): o noVNC do painel
     # escala automaticamente pro tamanho reportado pelo servidor VNC, então isso
