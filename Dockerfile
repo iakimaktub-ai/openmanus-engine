@@ -6,8 +6,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Baixa o código oficial do OpenManus
-RUN git clone --depth 1 https://github.com/FoundationAgents/OpenManus.git /app/openmanus
+# Baixa o código oficial do OpenManus, travado no último commit em que a
+# ferramenta BrowserUseTool ainda existia (o upstream a removeu em 05c5bbb,
+# "refactor(browser): use CLI 3.0 MCP server", trocando a navegação por um
+# SandboxBrowserTool via MCP que depende do serviço cloud daytona — não usado
+# neste fork). Sem esse pin, um git clone --depth 1 sem versão fixa quebra o
+# build a qualquer mudança no main do upstream.
+RUN git clone https://github.com/FoundationAgents/OpenManus.git /app/openmanus \
+    && cd /app/openmanus \
+    && git checkout 997352716f22eeab95c030399f716f57374240d2
 
 WORKDIR /app/openmanus
 
