@@ -6,15 +6,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Baixa o código oficial do OpenManus, travado no último commit em que a
-# ferramenta BrowserUseTool ainda existia (o upstream a removeu em 05c5bbb,
-# "refactor(browser): use CLI 3.0 MCP server", trocando a navegação por um
-# SandboxBrowserTool via MCP que depende do serviço cloud daytona — não usado
-# neste fork). Sem esse pin, um git clone --depth 1 sem versão fixa quebra o
+# Baixa o código oficial do OpenManus, travado no último commit em que
+# BrowserUseTool ainda era a ferramenta clássica baseada em Playwright (com os
+# campos .browser/.context que este server_wrapper.py usa para manter a sessão
+# de navegador viva entre chamadas). Em 2026-08-15 o upstream reescreveu a
+# ferramenta duas vezes no mesmo dia: primeiro em ab8dfe4 ("feat(browser): use
+# Browser Use CLI 3.0"), que troca o controle direto do Playwright por um
+# subprocesso `browser-use` via CLI (sem os campos .browser/.context — foi essa
+# a causa do erro em runtime "BrowserUseTool object has no field browser"), e
+# depois em 05c5bbb ("refactor(browser): use CLI 3.0 MCP server"), que remove a
+# classe por completo em favor de um SandboxBrowserTool via MCP que depende do
+# serviço cloud daytona (não usado neste fork). f616c5d4 é o commit
+# imediatamente anterior a essa reescrita — a última versão compatível com o
+# nosso código. Sem esse pin, um git clone --depth 1 sem versão fixa quebra o
 # build a qualquer mudança no main do upstream.
 RUN git clone https://github.com/FoundationAgents/OpenManus.git /app/openmanus \
     && cd /app/openmanus \
-    && git checkout 997352716f22eeab95c030399f716f57374240d2
+    && git checkout f616c5d43d02d93ccc6e55f11666726d6645fdc2
 
 WORKDIR /app/openmanus
 
