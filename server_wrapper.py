@@ -20,6 +20,14 @@ def _write_config():
     api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     model = os.environ.get("OPENMANUS_MODEL", "claude-sonnet-5").strip()
     base_url = "https://api.anthropic.com/v1/"
+    # Diagnóstico temporário (Bug #5): confirma se a env var está chegando ao
+    # container em runtime e se o formato da chave parece válido, sem expor o
+    # valor inteiro nos logs do Render. Remover depois que o 401 for resolvido.
+    print(
+        f"[_write_config] ANTHROPIC_API_KEY presente: {bool(api_key)} | "
+        f"tamanho: {len(api_key)} | prefixo: {api_key[:12]!r} | modelo: {model!r}",
+        flush=True,
+    )
     os.makedirs("config", exist_ok=True)
     toml_content = (
         "[llm]\n"
