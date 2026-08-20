@@ -68,6 +68,7 @@ _write_config()
 # /run pra detectar rápido "PC desligado/túnel fora do ar" antes de tentar rodar o
 # agente. LiteLLM expõe /health na raiz, não sob /v1, então removemos o sufixo.
 _LOCAL_LLM_BASE_URL = os.environ.get("LOCAL_LLM_BASE_URL", "").strip()
+_LOCAL_LLM_API_KEY = os.environ.get("LOCAL_LLM_API_KEY", "").strip()
 LOCAL_LLM_HEALTH_URL = (
     f"{_LOCAL_LLM_BASE_URL.rstrip('/').removesuffix('/v1')}/health"
     if _LOCAL_LLM_BASE_URL
@@ -531,7 +532,12 @@ async def run_task(req: TaskRequest, x_auth_token: str = Header(default="")):
     if LOCAL_LLM_HEALTH_URL:
         try:
             async with httpx.AsyncClient(timeout=3.0) as client:
-                health_resp = await client.get(LOCAL_LLM_HEALTH_URL)
+                health_headers = (
+                    {"Authorization": f"Bearer {_LOCAL_LLM_API_KEY}"}
+                    if _LOCAL_LLM_API_KEY
+                    else {}
+                )
+                health_resp = await client.get(LOCAL_LLM_HEALTH_URL, headers=health_headers)
                 health_resp.raise_for_status()
         except (httpx.HTTPError, httpx.TimeoutException):
             raise HTTPException(status_code=503, detail=LOCAL_LLM_OFFLINE_MESSAGE)
