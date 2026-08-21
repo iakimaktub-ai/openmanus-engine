@@ -11,7 +11,7 @@ import httpx
 import openai
 import psutil
 
-# --- gera config/config.toml a partir de variáveis de ambiente (Secrets do Space) ---
+# --- gera config/config.toml a partir de variáveis de ambiente (env vars da Render) ---
 # precisa acontecer ANTES de importar qualquer coisa de app.* (o OpenManus lê o
 # config.toml no momento em que o pacote app.config é importado).
 
@@ -124,6 +124,73 @@ from app.logger import logger
 from browser_use import Browser as BrowserUseBrowser, BrowserConfig
 
 
+# --- memória persistente em vault markdown, sincronizada via GitHub ---
+# Sem isso o Jarvis não tem estado nenhum entre chamadas de /run (cada uma cria
+# uma JarvisEngine() nova). O vault vive num repo GitHub privado em vez de um
+# disco persistente para não exigir upgrade de plano pago.
+VAULT_DIR = os.environ.get("VAULT_DIR", "/tmp/jarvis_vault").strip()
+VAULT_GITHUB_REPO = os.environ.get("VAULT_GITHUB_REPO", "").strip()
+VAULT_GITHUB_TOKEN = os.environ.get("VAULT_GITHUB_TOKEN", "").strip()
+VAULT_ENABLED = bool(VAULT_GITHUB_REPO and VAULT_GITHUB_TOKEN)
+
+VAULT_GIT_USER_NAME = "Jarvis"
+VAULT_GIT_USER_EMAIL = "jarvis@local"
+
+
+def _vault_git(*args, cwd=None, timeout=20):
+    """Roda git com identidade fixa e autenticação via header HTTP — o token
+    nunca é persistido em .git/config em disco."""
+    auth = base64.b64encode(f"x-access-token:{VAULT_GITHUB_TOKEN}".encode()).decode()
+    cmd = [
+        "git",
+        "-c", f"user.name={VAULT_GIT_USER_NAME}",
+        "-c", f"user.email={VAULT_GIT_USER_EMAIL}",
+        "-c", f"http.extraheader=AUTHORIZATION: basic {auth}",
+        *args,
+    ]
+    return subprocess.run(cmd, cwd=cwd, timeout=timeout, capture_output=True, text=True, check=True)
+
+
+def sync_vault_pull() -> bool:
+    """Clona (1ª vez) ou atualiza o vault local a partir do GitHub. Nunca
+    propaga exceção: falha de rede/token é só logada, e a tarefa segue sem
+    vault em vez de virar 500."""
+    if not VAULT_ENABLED:
+        return False
+    try:
+        if not os.path.isdir(os.path.join(VAULT_DIR, ".git")):
+            os.makedirs(VAULT_DIR, exist_ok=True)
+            remote_url = f"https://github.com/{VAULT_GITHUB_REPO}.git"
+            _vault_git("clone", "--depth", "1", remote_url, VAULT_DIR, timeout=20)
+        else:
+            _vault_git("pull", "--ff-only", cwd=VAULT_DIR, timeout=20)
+        return True
+    except Exception as e:
+        logger.error(f"erro sincronizando vault (pull): {e}")
+        return False
+
+
+def sync_vault_push() -> bool:
+    """Commita e envia mudanças no vault local, só se algo realmente mudou.
+    Mesma filosofia de falha graciosa do sync_vault_pull()."""
+    if not VAULT_ENABLED:
+        return False
+    try:
+        status = _vault_git("status", "--porcelain", cwd=VAULT_DIR, timeout=10)
+        if not status.stdout.strip():
+            return False
+        _vault_git("add", "-A", cwd=VAULT_DIR, timeout=10)
+        _vault_git("commit", "-m", "Atualização automática do Jarvis", cwd=VAULT_DIR, timeout=10)
+        _vault_git("push", cwd=VAULT_DIR, timeout=20)
+        return True
+    except Exception as e:
+        logger.error(f"erro sincronizando vault (push): {e}")
+        return False
+
+
+_vault_lock = asyncio.Lock()
+
+
 class JarvisEngine(ToolCallAgent):
     """Agente leve (sem navegador automatizado) que serve de motor de ações pro Jarvis."""
 
@@ -166,7 +233,18 @@ class JarvisEngine(ToolCallAgent):
         "captcha ou clicar em uma caixa), PARE e chame terminate explicando que o site pediu uma verificação "
         "de segurança que exige ação humana, e diga que a pessoa pode resolvê-la manualmente através do "
         "painel de navegação ao vivo que já está aberto na tela dela, e depois pedir para você continuar a "
-        "tarefa. Nunca tente contornar, falsificar ou burlar esses desafios de verificação."
+        "tarefa. Nunca tente contornar, falsificar ou burlar esses desafios de verificação. "
+        f"MEMÓRIA DE LONGO PRAZO (vault): você tem acesso a uma pasta local em '{VAULT_DIR}' com notas em "
+        "markdown que persistem entre conversas — use a ferramenta str_replace_editor para ler e editar "
+        "esses arquivos. Arquivos esperados: 'contexto.md' (fatos e preferências duradouras sobre a "
+        "pessoa), 'pendencias.md' (itens em aberto) e 'Diario/AAAA-MM-DD.md' (uma nota por dia, criada "
+        "conforme necessário). Antes de responder qualquer pergunta que dependa de contexto pessoal ou "
+        "de conversas anteriores, leia 'contexto.md' e 'pendencias.md' primeiro. NUNCA invente informação "
+        "que não está nesses arquivos — se um arquivo esperado não existir ou não tiver a informação "
+        "pedida, diga explicitamente que não encontrou, em vez de adivinhar. Quando descobrir um fato, "
+        "decisão ou pendência nova durante a tarefa, registre em markdown curto no arquivo apropriado "
+        "(criando-o se necessário) — mantenha tudo escaneável, curto e organizado, nunca um relatório "
+        "longo."
     )
     next_step_prompt: str = (
         "Escolha a ferramenta mais adequada para avançar a tarefa. "
@@ -382,7 +460,7 @@ async def _on_startup():
     asyncio.create_task(_browser_session_reaper())
 
 # Token simples pra ninguém além do seu Jarvis conseguir usar sua chave/quota.
-# Configure o mesmo valor como Secret WRAPPER_AUTH_TOKEN aqui no Space, e
+# Configure o mesmo valor como env var WRAPPER_AUTH_TOKEN na Render, e
 # cole esse mesmo valor no campo de token do Jarvis.
 AUTH_TOKEN = os.environ.get("WRAPPER_AUTH_TOKEN", "").strip()
 
@@ -426,6 +504,29 @@ async def stats(x_auth_token: str = Header(default="")):
         "cpu_percent": psutil.cpu_percent(interval=0),
         "memory_percent": psutil.virtual_memory().percent,
     }
+
+
+@app.get("/diag/llm")
+async def diag_llm(x_auth_token: str = Header(default="")):
+    """Diagnóstico temporário: isola se o 'Connection error' do Gemini é falha de
+    rede de saída da Render (sem acesso ao Shell pago pra testar isso direto) ou
+    outra coisa, testando a mesma URL com httpx puro em vez do client da OpenAI."""
+    if AUTH_TOKEN and x_auth_token != AUTH_TOKEN:
+        raise HTTPException(status_code=401, detail="token inválido")
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    result = {"gemini_api_key_presente": bool(api_key), "gemini_api_key_tamanho": len(api_key)}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{GEMINI_OPENAI_BASE_URL}models",
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+            result["conexao_ok"] = True
+            result["status_code"] = resp.status_code
+    except Exception as e:
+        result["conexao_ok"] = False
+        result["erro"] = f"{type(e).__name__}: {e}"
+    return result
 
 
 @app.post("/browse/start")
@@ -521,26 +622,33 @@ async def run_task(req: TaskRequest, x_auth_token: str = Header(default="")):
     else:
         agent = JarvisEngine()
 
-    try:
-        raw_result = await agent.run(req.task)
-        result = _extract_final_answer(raw_result)
-        return {"result": result}
-    except openai.RateLimitError as e:
-        logger.error(f"limite gratuito do Gemini atingido: {e}")
-        raise HTTPException(
-            status_code=429,
-            detail="Limite gratuito do Gemini foi atingido no momento. Tente novamente em alguns instantes.",
-        )
-    except Exception as e:
-        logger.error(f"erro executando tarefa: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if req.session_id:
-            # atualiza last_activity ao FIM da tarefa (não só no início), para que
-            # a contagem de inatividade do reaper recomece da conclusão real, e
-            # libera a flag que bloqueava o reaper durante a execução.
-            _browser_session["last_activity"] = time.time()
-            _browser_session["in_progress"] = False
+    # prefixa a data do servidor para o agente saber qual arquivo de Diario/ usar,
+    # sem depender da própria noção (potencialmente desatualizada) de "hoje" do LLM.
+    task_with_date = f"Hoje é {time.strftime('%d/%m/%Y')}. {req.task}"
+
+    async with _vault_lock:
+        await asyncio.to_thread(sync_vault_pull)
+        try:
+            raw_result = await agent.run(task_with_date)
+            result = _extract_final_answer(raw_result)
+            return {"result": result}
+        except openai.RateLimitError as e:
+            logger.error(f"limite gratuito do Gemini atingido: {e}")
+            raise HTTPException(
+                status_code=429,
+                detail="Limite gratuito do Gemini foi atingido no momento. Tente novamente em alguns instantes.",
+            )
+        except Exception as e:
+            logger.error(f"erro executando tarefa: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+        finally:
+            await asyncio.to_thread(sync_vault_push)
+            if req.session_id:
+                # atualiza last_activity ao FIM da tarefa (não só no início), para que
+                # a contagem de inatividade do reaper recomece da conclusão real, e
+                # libera a flag que bloqueava o reaper durante a execução.
+                _browser_session["last_activity"] = time.time()
+                _browser_session["in_progress"] = False
 
 
 @app.post("/tts")
