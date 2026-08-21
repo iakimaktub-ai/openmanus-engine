@@ -15,21 +15,19 @@ import psutil
 # precisa acontecer ANTES de importar qualquer coisa de app.* (o OpenManus lê o
 # config.toml no momento em que o pacote app.config é importado).
 
+GEMINI_OPENAI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+
 def _write_config():
     # .strip() remove espaços em branco e quebras de linha acidentais que às vezes
     # vêm junto ao copiar/colar a chave de um lugar pra outro (evita quebrar o TOML).
-    api_key = os.environ.get("LOCAL_LLM_API_KEY", "").strip()
-    model = os.environ.get("OPENMANUS_MODEL", "jarvis-local").strip()
-    base_url = os.environ.get("LOCAL_LLM_BASE_URL", "").strip()
-    # Diagnóstico: confirma se as env vars do LLM local (Ollama + LiteLLM + túnel)
-    # estão chegando ao container em runtime, sem expor a chave nos logs do Render.
-    # Falhas mais prováveis agora são "PC desligado" ou "túnel fora do ar", não
-    # "chave errada" — por isso logamos o host, não o valor completo da URL/key.
-    base_url_host = httpx.URL(base_url).host if base_url else None
+    # Mesma GEMINI_API_KEY já usada pelo /tts (modelo diferente = cota separada).
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    model = os.environ.get("OPENMANUS_MODEL", "gemini-3.5-flash-lite").strip()
+    base_url = GEMINI_OPENAI_BASE_URL
     print(
-        f"[_write_config] LOCAL_LLM_API_KEY presente: {bool(api_key)} | "
-        f"tamanho: {len(api_key)} | LOCAL_LLM_BASE_URL host: {base_url_host!r} | "
-        f"modelo: {model!r}",
+        f"[_write_config] GEMINI_API_KEY presente: {bool(api_key)} | "
+        f"tamanho: {len(api_key)} | modelo: {model!r}",
         flush=True,
     )
     os.makedirs("config", exist_ok=True)
@@ -63,21 +61,6 @@ def _write_config():
         f.write(toml_content)
 
 _write_config()
-
-# URL de health-check do LiteLLM (roda no PC do usuário, atrás do túnel), usada em
-# /run pra detectar rápido "PC desligado/túnel fora do ar" antes de tentar rodar o
-# agente. LiteLLM expõe /health na raiz, não sob /v1, então removemos o sufixo.
-_LOCAL_LLM_BASE_URL = os.environ.get("LOCAL_LLM_BASE_URL", "").strip()
-_LOCAL_LLM_API_KEY = os.environ.get("LOCAL_LLM_API_KEY", "").strip()
-LOCAL_LLM_HEALTH_URL = (
-    f"{_LOCAL_LLM_BASE_URL.rstrip('/').removesuffix('/v1')}/health"
-    if _LOCAL_LLM_BASE_URL
-    else ""
-)
-LOCAL_LLM_OFFLINE_MESSAGE = (
-    "O modelo local do Jarvis está offline (PC desligado, Ollama parado ou "
-    "túnel indisponível). Ligue o PC e tente novamente."
-)
 
 import re
 
@@ -526,22 +509,6 @@ async def run_task(req: TaskRequest, x_auth_token: str = Header(default="")):
     if not req.task or not req.task.strip():
         raise HTTPException(status_code=400, detail="task vazia")
 
-    # o uso é sob demanda (PC não fica ligado 24/7) — checa rápido se o LLM local
-    # está de pé ANTES de entrar no loop do agente, pra dar um erro claro em vez de
-    # travar por vários passos de retry ou estourar um 500 genérico.
-    if LOCAL_LLM_HEALTH_URL:
-        try:
-            async with httpx.AsyncClient(timeout=3.0) as client:
-                health_headers = (
-                    {"Authorization": f"Bearer {_LOCAL_LLM_API_KEY}"}
-                    if _LOCAL_LLM_API_KEY
-                    else {}
-                )
-                health_resp = await client.get(LOCAL_LLM_HEALTH_URL, headers=health_headers)
-                health_resp.raise_for_status()
-        except (httpx.HTTPError, httpx.TimeoutException):
-            raise HTTPException(status_code=503, detail=LOCAL_LLM_OFFLINE_MESSAGE)
-
     if req.session_id:
         if _browser_session["session_id"] != req.session_id:
             raise HTTPException(
@@ -558,11 +525,12 @@ async def run_task(req: TaskRequest, x_auth_token: str = Header(default="")):
         raw_result = await agent.run(req.task)
         result = _extract_final_answer(raw_result)
         return {"result": result}
-    except (httpx.ConnectError, httpx.TimeoutException, openai.APIConnectionError) as e:
-        # cobre o túnel/Ollama caindo DURANTE uma tarefa já iniciada, depois que o
-        # health-check inicial passou — mesma mensagem amigável do health-check.
-        logger.error(f"LLM local ficou inacessível durante a tarefa: {e}")
-        raise HTTPException(status_code=503, detail=LOCAL_LLM_OFFLINE_MESSAGE)
+    except openai.RateLimitError as e:
+        logger.error(f"limite gratuito do Gemini atingido: {e}")
+        raise HTTPException(
+            status_code=429,
+            detail="Limite gratuito do Gemini foi atingido no momento. Tente novamente em alguns instantes.",
+        )
     except Exception as e:
         logger.error(f"erro executando tarefa: {e}")
         raise HTTPException(status_code=500, detail=str(e))
